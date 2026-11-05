@@ -18,6 +18,9 @@ BUDGET = int(os.environ.get("BUDGET_SEC", "18000"))
 CHUNK = 600
 OVERLAP = 5
 SILENCE = 0.004
+MAX_DURATION = 4 * 3600
+MAX_BYTES = 50 * 1024 * 1024
+KEEP_DAYS = 7
 
 H = {"apikey": KEY, "Authorization": "Bearer " + KEY}
 
@@ -100,6 +103,28 @@ def build_srt(segs):
     return "\n".join(out)
 
 
+def cleanup():
+    try:
+        keep = {r["storage_path"] for r in api("/rest/v1/jobs?select=storage_path&status=in.(queued,running)").json()}
+        objs = api("/storage/v1/object/list/audio", "POST",
+                   json={"prefix": "", "limit": 1000, "sortBy": {"column": "created_at", "order": "asc"}}).json()
+        now = time.time()
+        for o in objs:
+            name = o.get("name")
+            if not name or name in keep:
+                continue
+            ts = o.get("created_at") or ""
+            try:
+                t = time.mktime(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")) - time.timezone
+            except ValueError:
+                continue
+            if now - t > KEEP_DAYS * 86400:
+                api(f"/storage/v1/object/audio/{name}", "DELETE")
+                print("drop", name, flush=True)
+    except Exception as e:
+        print("cleanup skipped", e, flush=True)
+
+
 def process(model, job, workdir):
     job_id = job["id"]
     src = workdir / ("src" + Path(job["storage_path"]).suffix)
@@ -107,10 +132,14 @@ def process(model, job, workdir):
     if not r.ok:
         raise RuntimeError("download " + r.text[:200])
     src.write_bytes(r.content)
+    if len(r.content) > MAX_BYTES:
+        raise RuntimeError("file above 50 MB")
 
     wav = workdir / "full.wav"
     to_wav(src, wav)
     total = duration(wav)
+    if total > MAX_DURATION:
+        raise RuntimeError("audio above 4 hours")
     patch(job_id, duration_s=total)
 
     step = CHUNK - OVERLAP
@@ -133,6 +162,7 @@ def process(model, job, workdir):
 
 def main():
     model = onnx_asr.load_model("gigaam-v3-e2e-ctc", providers=["CPUExecutionProvider"])
+    cleanup()
     started = time.time()
     while time.time() - started < BUDGET:
         job = claim()
