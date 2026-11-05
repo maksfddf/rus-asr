@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Расшифровка</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #141414; color: #e9e9e9; font: 15px/1.5 -apple-system, system-ui, sans-serif; }
+  header { padding: 14px 16px; border-bottom: 1px solid #2a2a2a; display: flex; gap: 10px; align-items: center; }
+  h1 { font-size: 16px; margin: 0 auto 0 0; font-weight: 600; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  .card { background: #1b1b1b; border: 1px solid #2a2a2a; border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+  label { display: block; font-size: 13px; color: #9a9a9a; margin-bottom: 6px; }
+  input, button { font: inherit; }
+  input[type=text], input[type=password] { width: 100%; box-sizing: border-box; background: #101010; color: #eee; border: 1px solid #333; border-radius: 8px; padding: 9px 10px; }
+  button { background: #2a2a2a; color: #eee; border: 1px solid #3a3a3a; border-radius: 8px; padding: 9px 14px; cursor: pointer; }
+  button.main { background: #e9e9e9; color: #111; border-color: #e9e9e9; font-weight: 600; }
+  button.rec { background: #3a1f1f; border-color: #6b2b2b; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .job { border-top: 1px solid #262626; padding: 12px 0; }
+  .job:first-child { border-top: 0; }
+  .meta { font-size: 12px; color: #8b8b8b; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .text { white-space: pre-wrap; background: #101010; border: 1px solid #262626; border-radius: 8px; padding: 10px; margin-top: 8px; max-height: 320px; overflow: auto; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #777; }
+  .dot.done { background: #4caf50; } .dot.error { background: #e05252; } .dot.running { background: #e0a852; }
+</style>
+</head>
+<body>
+<header><h1>Расшифровка речи</h1><button id="settings">Настройки</button></header>
+<main>
+  <div class="card" id="set" hidden>
+    <label>Supabase URL</label>
+    <input type="text" id="sbUrl" placeholder="https://xxx.supabase.co">
+    <label style="margin-top:10px">anon key</label>
+    <input type="password" id="sbKey" placeholder="anon key">
+    <div class="row" style="margin-top:10px"><button id="saveSet">Сохранить</button></div>
+  </div>
+
+  <div class="card">
+    <label>Файл или запись</label>
+    <div class="row">
+      <input type="file" id="file" accept="audio/*,video/*">
+      <button id="rec" class="rec">Записать</button>
+      <span id="recTime" class="meta"></span>
+    </div>
+    <input type="text" id="title" placeholder="Название, необязательно" style="margin-top:10px">
+    <div class="row" style="margin-top:10px"><button id="send" class="main">Расшифровать</button><span id="hint" class="meta"></span></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><label style="margin:0">Задачи</label><button id="reload">Обновить</button></div>
+    <div id="list"></div>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const texts = new Map();
+const cfg = {
+  get url() { return (localStorage.sbUrl || '').replace(/\/$/, '') },
+  get key() { return localStorage.sbKey || '' },
+};
+$('sbUrl').value = cfg.url;
+$('sbKey').value = cfg.key;
+$('settings').onclick = () => $('set').hidden = !$('set').hidden;
+$('saveSet').onclick = () => {
+  localStorage.sbUrl = $('sbUrl').value.trim().replace(/\/$/, '');
+  localStorage.sbKey = $('sbKey').value.trim();
+  $('set').hidden = true;
+  load();
+};
+
+function hint(t) { $('hint').textContent = t || ''; }
+function esc(s) { return (s || '').replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])); }
+function head() { return { apikey: cfg.key, Authorization: 'Bearer ' + cfg.key }; }
+
+let rec = null, chunks = [], timer = null, t0 = 0;
+$('rec').onclick = async () => {
+  if (rec) { rec.stop(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    rec = new MediaRecorder(stream, {
+      mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '',
+      audioBitsPerSecond: 32000,
+    });
+    chunks = [];
+    rec.ondataavailable = e => chunks.push(e.data);
+    rec.onstop = () => {
+      clearInterval(timer);
+      stream.getTracks().forEach(t => t.stop());
+      const f = new File([new Blob(chunks, { type: 'audio/webm' })], 'record.webm', { type: 'audio/webm' });
+      const dt = new DataTransfer();
+      dt.items.add(f);
+      $('file').files = dt.files;
+      rec = null;
+      $('rec').textContent = 'Записать';
+      $('recTime').textContent = '';
+    };
+    rec.start();
+    $('rec').textContent = 'Стоп';
+    t0 = Date.now();
+    timer = setInterval(() => $('recTime').textContent = ((Date.now() - t0) / 1000).toFixed(1) + ' с', 200);
+  } catch { hint('нет доступа к микрофону'); }
+};
+
+$('send').onclick = async () => {
+  const f = $('file').files[0];
+  if (!cfg.url || !cfg.key) { $('set').hidden = false; return hint('заполни настройки'); }
+  if (!f) return hint('выбери файл или запиши');
+  if (f.size > 50 * 1024 * 1024) return hint('файл больше 50 МБ, режь на части');
+  const id = crypto.randomUUID();
+  const ext = (f.name.split('.').pop() || 'webm').toLowerCase().slice(0, 5);
+  const path = id + '.' + ext;
+  hint('загружаю...');
+  try {
+    const up = await fetch(cfg.url + '/storage/v1/object/audio/' + path, {
+      method: 'POST',
+      headers: { ...head(), 'Content-Type': f.type || 'application/octet-stream' },
+      body: f,
+    });
+    if (!up.ok) throw new Error(await up.text());
+    const db = await fetch(cfg.url + '/rest/v1/jobs', {
+      method: 'POST',
+      headers: { ...head(), 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify({ id, title: $('title').value.trim() || f.name, storage_path: path }),
+    });
+    if (!db.ok) throw new Error(await db.text());
+    hint('в очереди');
+    $('file').value = '';
+    await load();
+    watch(id);
+  } catch (e) { hint('ошибка: ' + e.message); }
+};
+
+async function get(path) {
+  const r = await fetch(cfg.url + path, { headers: head() });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function load() {
+  if (!cfg.url || !cfg.key) return;
+  try {
+    const jobs = await get('/rest/v1/jobs?select=id,title,status,duration_s,created_at&order=created_at.desc&limit=50');
+    $('list').innerHTML = jobs.map(j => `
+      <div class="job" data-id="${j.id}">
+        <div class="meta"><span class="dot ${j.status}"></span><b>${esc(j.title)}</b>
+          <span>${j.status}</span><span>${j.duration_s ? Math.round(j.duration_s) + ' с' : ''}</span></div>
+        <div class="body">${texts.has(j.id) ? bodyHtml(j.id) : ''}</div>
+      </div>`).join('') || '<div class="meta">пусто</div>';
+    for (const j of jobs) if (j.status === 'done' && !texts.has(j.id)) fill(j.id);
+  } catch (e) { $('list').innerHTML = '<div class="meta">' + esc('ошибка: ' + e.message) + '</div>'; }
+}
+
+function bodyHtml(id) {
+  return `<div class="text">${esc(texts.get(id) || '')}</div>
+    <div class="row" style="margin-top:8px">
+      <button data-dl="txt">txt</button><button data-dl="srt">srt</button>
+      <button data-copy>копировать</button>
+    </div>`;
+}
+
+async function fill(id) {
+  const j = (await get('/rest/v1/jobs?id=eq.' + id + '&select=title,text,srt'))[0];
+  if (!j || !j.text) return;
+  texts.set(id, j.text);
+  const box = document.querySelector('.job[data-id="' + id + '"] .body');
+  if (box) box.innerHTML = bodyHtml(id);
+}
+
+$('list').onclick = async ev => {
+  const b = ev.target.closest('button');
+  const job = ev.target.closest('.job');
+  if (!b || !job) return;
+  const id = job.dataset.id;
+  const title = job.querySelector('b')?.textContent || id;
+  if (b.dataset.copy !== undefined) { navigator.clipboard.writeText(texts.get(id) || ''); hint('скопировано'); }
+  const kind = b.dataset.dl;
+  if (kind) {
+    let body = texts.get(id) || '';
+    if (kind === 'srt') {
+      const j = (await get('/rest/v1/jobs?id=eq.' + id + '&select=srt'))[0];
+      body = j?.srt || '';
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([body], { type: 'text/plain;charset=utf-8' }));
+    a.download = title + '.' + kind;
+    a.click();
+  }
+};
+
+function watch(id) {
+  const t = setInterval(async () => {
+    try {
+      const j = (await get('/rest/v1/jobs?id=eq.' + id + '&select=status,error'))[0];
+      if (!j) return;
+      if (j.status === 'done') { clearInterval(t); fill(id); hint('готово'); }
+      if (j.status === 'error') { clearInterval(t); hint('ошибка: ' + (j.error || '')); }
+    } catch { /* сеть */ }
+  }, 3000);
+}
+
+$('reload').onclick = load;
+load();
+setInterval(load, 20000);
+</script>
+</body>
+</html>

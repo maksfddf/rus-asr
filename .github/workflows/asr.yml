@@ -1,0 +1,43 @@
+name: asr
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: asr
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  work:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: gigaam-v3-e2e-ctc
+
+      - name: deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          pip install -q -r worker/requirements.txt
+
+      - name: run
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          BUDGET_SEC: "18000"
+        run: python worker/asr.py
