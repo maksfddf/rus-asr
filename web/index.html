@@ -30,7 +30,9 @@
 <header><h1>Расшифровка речи</h1><button id="settings">Настройки</button></header>
 <main>
   <div class="card" id="set" hidden>
-    <label>Supabase URL</label>
+    <label>GitHub token, только Actions write</label>
+    <input type="password" id="gh" placeholder="github_pat_ или ghp_">
+    <label style="margin-top:10px">Supabase URL</label>
     <input type="text" id="sbUrl" placeholder="https://xxx.supabase.co">
     <label style="margin-top:10px">anon key</label>
     <input type="password" id="sbKey" placeholder="anon key">
@@ -62,10 +64,12 @@ const cfg = {
 };
 $('sbUrl').value = cfg.url;
 $('sbKey').value = cfg.key;
+$('gh').value = cfg.gh;
 $('settings').onclick = () => $('set').hidden = !$('set').hidden;
 $('saveSet').onclick = () => {
   localStorage.sbUrl = $('sbUrl').value.trim().replace(/\/$/, '');
   localStorage.sbKey = $('sbKey').value.trim();
+  localStorage.gh = $('gh').value.trim();
   $('set').hidden = true;
   load();
 };
@@ -126,11 +130,21 @@ $('send').onclick = async () => {
     });
     if (!db.ok) throw new Error(await db.text());
     hint('в очереди');
+    kick();
     $('file').value = '';
     await load();
     watch(id);
   } catch (e) { hint('ошибка: ' + e.message); }
 };
+
+function kick() {
+  if (!cfg.gh) return;
+  fetch('https://api.github.com/repos/maksfddf/rus-asr/dispatches', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + cfg.gh, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event_type: 'job' }),
+  }).catch(() => {});
+}
 
 async function get(path) {
   const r = await fetch(cfg.url + path, { headers: head() });
