@@ -1,46 +1,40 @@
 # Расшифровка русского аудио
 
-Очередь ASR на GigaAM v3 E2E CTC (int8 ONNX), модель с пунктуацией, лицензия MIT.
-Считает GitHub Actions на бесплатном раннере, интерфейс на бесплатном статическом пространстве Hugging Face, очередь и тексты в Supabase.
-Ничего не крутится на домашнем компьютере.
+GigaAM v3 E2E CTC int8, пунктуация и нормализация. Лицензия MIT.
+Считает GitHub Actions на бесплатном раннере, интерфейс на бесплатном статическом пространстве Hugging Face, очередь и тексты в Supabase. Домашний компьютер не нужен.
 
-100 часов в месяц это 3,3 часа в сутки, при скорости в 4 раза быстрее реального времени около 50 минут счёта в день. Лимит одного запуска 5 часов, куски по 10 минут, очередь последовательная.
+- Интерфейс: https://makarpidoras-asr-ui.static.hf.space
+- Очередь: https://supabase.com/dashboard/project/poatgesiflkoyuvoqvxo
+- Запуски: https://github.com/maksfddf/rus-asr/actions
 
-## 1. Supabase
+## Настройка на телефоне
 
-1. Проект на supabase.com, карта не нужна.
-2. SQL Editor, вставить `supabase/schema.sql`, выполнить.
-3. Settings, API: взять Project URL, anon key и service_role key.
+Открыть интерфейс, Настройки, вписать:
 
-## 2. Hugging Face
+- URL: `https://poatgesiflkoyuvoqvxo.supabase.co`
+- anon key: `sb_publishable_pwHnnP0vm7k0VRejEBsaWg_3fGbbm6Q`
 
-1. Аккаунт, токен Write.
-2. `python3 -m venv .venv && . .venv/bin/activate && pip install huggingface_hub`
-3. `export HF_USER=логин HF_TOKEN=токен && python deploy.py`
-4. Получишь адрес интерфейса.
+Оба значения не секретные. Сохранить, дальше запись или файл.
 
-## 3. GitHub
+## Как идёт работа
 
-1. Аккаунт, пустой публичный репозиторий `rus-asr`.
-2. Settings, Secrets and variables, Actions: `SUPABASE_URL`, `SUPABASE_KEY` (service_role), `HF_TOKEN`.
-3. Залить этот каталог в ветку `main`.
-4. Actions, workflow `asr`, Run workflow для проверки.
-
-Публичный репозиторий даёт неограниченные минуты, приватный 2000 в месяц.
-
-## 4. Проверка
-
-Открыть интерфейс, вписать URL и anon key, записать 30 секунд, дождаться текста.
-Очередь видно в таблице `jobs`, логи в Actions.
+1. Телефон загружает аудио в приватный бакет и создаёт задачу.
+2. Cron каждые 10 минут поднимает раннер, воркер берёт самую старую задачу.
+3. Аудио режется по 10 минут с перехлёстом 5 секунд, идёт через модель, куски склеиваются без дублей.
+4. Текст и srt пишутся в базу, файл удаляется.
+5. Старые файлы чистятся через 7 суток, если задача так и не дошла.
 
 ## Ограничения
 
-- 50 МБ и 4 часа на файл, куски по 10 минут.
-- Один воркер, параллельных задач нет.
-- Секреты только в GitHub Secrets, anon key публичный.
-- Аудио удаляется после расшифровки, тексты в Supabase.
-- Cron на GitHub может запаздывать на 5–20 минут, это нормально.
+- 50 МБ и 4 часа на файл.
+- Один воркер, очередь последовательная.
+- Cron может опаздывать на 5–20 минут.
+- Приватный бакет, тексты читаются по anon key.
 
-## Стоимость
+## Секреты
 
-Ноль. Расход: минуты Actions и квота Supabase.
+`SUPABASE_URL`, `SUPABASE_KEY` (service_role), `HF_TOKEN` в Settings, Secrets and variables, Actions.
+
+## Проверка
+
+`python worker/asr.py` локально с переменными окружения. Нужны ffmpeg и `pip install -r worker/requirements.txt`.
