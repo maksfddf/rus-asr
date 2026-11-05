@@ -138,7 +138,6 @@ $('send').onclick = async () => {
 };
 
 function kick() {
-  if (!cfg.gh) return;
   fetch('https://api.github.com/repos/maksfddf/rus-asr/dispatches', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + cfg.gh, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
